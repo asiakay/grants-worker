@@ -1,1 +1,96 @@
 
+name: Generate & Deploy Cloudflare Worker
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Create project structure programmatically
+        run: |
+          mkdir -p src
+
+          # Create Worker code
+          cat > src/index.js << 'EOF'
+          const GRANTS_API_URL = "https://api.grants.gov/v1/api/search2";
+
+          export default {
+            async fetch(request) {
+              const searchBody = {
+                rows: 20,
+                keyword: "energy",
+                oppStatuses: "forecasted|posted",
+                agencies: "",
+                fundingCategories: "",
+                eligibilities: "",
+                oppNum: "",
+                aln: ""
+              };
+
+              const res = await fetch(GRANTS_API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(searchBody)
+              });
+
+              if (!res.ok) {
+                return new Response(JSON.stringify({
+                  error: true,
+                  status: res.status,
+                  message: "Grants.gov API error"
+                }), { status: 502 });
+              }
+
+              const json = await res.json();
+
+              return new Response(JSON.stringify(json), {
+                headers: {
+                  "Content-Type": "application/json",
+                  "Access-Control-Allow-Origin": "*"
+                }
+              });
+            }
+          };
+          EOF
+
+          # Create wrangler.toml
+          cat > wrangler.toml << 'EOF'
+          name = "grants-worker"
+          main = "src/index.js"
+          compatibility_date = "2024-12-24"
+          EOF
+
+          # Create package.json
+          cat > package.json << 'EOF'
+          {
+            "name": "grants-worker",
+            "version": "1.0.0",
+            "devDependencies": {
+              "wrangler": "3.82.0"
+            },
+            "scripts": {
+              "deploy": "wrangler deploy"
+            }
+          }
+          EOF
+
+      - name: Install Wrangler
+        run: npm install wrangler@latest
+
+      - name: Deploy to Cloudflare
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
