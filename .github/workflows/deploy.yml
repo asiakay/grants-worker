@@ -1,4 +1,4 @@
-name: Generate & Deploy Worker + UI
+name: Build + Deploy Grants Worker + UI (Auto-create Files)
 
 on:
   push:
@@ -9,295 +9,336 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
+      ############################################################
+      # 1. CHECKOUT
+      ############################################################
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      ############################################################
+      # 2. CREATE PROJECT FILES IF NOT EXIST
+      ############################################################
+      - name: Create src + UI files
+        run: |
+          mkdir -p src
+          mkdir -p public
+
+          ##########################################################
+          # Worker File
+          ##########################################################
+          if [ ! -f src/index.ts ]; then
+            cat > src/index.ts << 'EOF'
+const API_URL = "https://api.grants.gov/v1/api/search2";
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    const keyword = url.searchParams.get("keyword") || "community";
+    const rows = Number(url.searchParams.get("rows")) || 50;
+    const start = Number(url.searchParams.get("start")) || 0;
+
+    const body = {
+      keyword,
+      rows,
+      start,
+      oppStatuses: "posted|forecasted"
+    };
+
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    const json = await res.json();
+
+    return new Response(JSON.stringify(json), {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
+  }
+};
+EOF
+          fi
+
+          ##########################################################
+          # UI Files
+          ##########################################################
+          if [ ! -f public/index.html ]; then
+            cat > public/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Grant Finder Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <h1>Grant Finder Dashboard</h1>
+
+  <div class="search-bar">
+    <input id="keyword" type="text" placeholder="Search grants…">
+
+    <select id="rows">
+      <option value="20">20</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+      <option value="250">250 (max)</option>
+    </select>
+
+    <button onclick="searchGrants(true)">Search</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="results"></div>
+
+  <button id="load-more" style="display:none;" onclick="loadMore()">Load More</button>
+
+  <script src="app.js"></script>
+</body>
+</html>
+EOF
+          fi
+
+          if [ ! -f public/styles.css ]; then
+            cat > public/styles.css << 'EOF'
+body {
+  font-family: system-ui, Arial, sans-serif;
+  background: #0b1020;
+  color: #eee;
+  padding: 24px;
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.search-bar {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+input, select {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #11152a;
+  color: #eee;
+}
+
+button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  background: #20c997;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.grant {
+  background: #11152a;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid #1f2937;
+}
+
+.grant-title {
+  color: #4fd1c5;
+  font-size: 16px;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.grant-title:hover {
+  text-decoration: underline;
+  color: #38b2ac;
+}
+
+#load-more {
+  margin: 20px auto;
+  display: block;
+  background: #20c997;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-weight: bold;
+}
+EOF
+          fi
+
+          if [ ! -f public/app.js ]; then
+            cat > public/app.js << 'EOF'
+const WORKER_URL = "WORKER_URL_GLOBAL";
+
+let currentKeyword = "";
+let currentRows = 50;
+let currentStart = 0;
+let totalAvailable = 0;
+
+async function searchGrants(reset = false) {
+  const keywordInput = document.getElementById("keyword");
+  const rowsInput = document.getElementById("rows");
+  const statusEl = document.getElementById("status");
+  const resultsEl = document.getElementById("results");
+  const loadMoreBtn = document.getElementById("load-more");
+
+  if (reset) {
+    resultsEl.innerHTML = "";
+    currentStart = 0;
+  }
+
+  currentKeyword = keywordInput.value.trim() || "community";
+  currentRows = Number(rowsInput.value) || 50;
+
+  const url =
+    \`\${WORKER_URL}?keyword=\${encodeURIComponent(currentKeyword)}&rows=\${currentRows}&start=\${currentStart}\`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+  const list = data?.data?.oppHits || [];
+  totalAvailable = data?.data?.totalRecords || list.length;
+
+  list.forEach(grant => {
+    const link = \`https://www.grants.gov/search-results-detail/\${grant.number}\`;
+
+    const div = document.createElement("div");
+    div.className = "grant";
+
+    div.innerHTML = \`
+      <a class="grant-title" href="\${link}" target="_blank" rel="noopener noreferrer">
+        \${grant.title}
+      </a>
+      <div class="grant-meta">
+        <span><strong>Agency:</strong> \${grant.agencyName}</span>
+        <span><strong>Opp #:</strong> \${grant.number}</span>
+        <span><strong>Open:</strong> \${grant.openDate}</span>
+        <span><strong>Close:</strong> \${grant.closeDate || "N/A"}</span>
+      </div>
+    \`;
+
+    resultsEl.appendChild(div);
+  });
+
+  statusEl.textContent =
+    \`Showing \${resultsEl.children.length} of \${totalAvailable} results\`;
+
+  loadMoreBtn.style.display =
+    resultsEl.children.length < totalAvailable ? "block" : "none";
+}
+
+function loadMore() {
+  currentStart += currentRows;
+  searchGrants(false);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  searchGrants(true);
+});
+EOF
+          fi
+
+          ##########################################################
+          # package.json
+          ##########################################################
+          if [ ! -f package.json ]; then
+            cat > package.json << 'EOF'
+{
+  "name": "grants-worker",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "wrangler": "3.82.0"
+  }
+}
+EOF
+          fi
+
+          ##########################################################
+          # tsconfig.json
+          ##########################################################
+          if [ ! -f tsconfig.json ]; then
+            cat > tsconfig.json << 'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
+EOF
+          fi
+
+          ##########################################################
+          # wrangler.toml
+          ##########################################################
+          if [ ! -f wrangler.toml ]; then
+            cat > wrangler.toml << 'EOF'
+name = "grants-worker"
+main = "dist/index.js"
+compatibility_date = "2024-12-24"
+EOF
+          fi
+
+      ############################################################
+      # 3. SETUP NODE
+      ############################################################
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      ####################################################################
-      # 1. GENERATE WORKER (pagination + rows)
-      ####################################################################
-      - name: Generate Worker Files
-        run: |
-          mkdir -p src
-
-          cat > src/index.ts << 'EOF'
-          const API_URL = "https://api.grants.gov/v1/api/search2";
-
-          export default {
-            async fetch(request: Request): Promise<Response> {
-              const url = new URL(request.url);
-
-              const keyword = url.searchParams.get("keyword") || "energy";
-              const rows = Number(url.searchParams.get("rows")) || 50;
-              const start = Number(url.searchParams.get("start")) || 0;
-
-              const body = {
-                keyword,
-                rows,
-                start,
-                oppStatuses: "posted|forecasted"
-              };
-
-              const res = await fetch(API_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body)
-              });
-
-              const json = await res.json();
-
-              return new Response(JSON.stringify(json), {
-                headers: {
-                  "Content-Type": "application/json",
-                  "Access-Control-Allow-Origin": "*"
-                }
-              });
-            }
-          };
-          EOF
-
-          # tsconfig.json
-          cat > tsconfig.json << 'EOF'
-          {
-            "compilerOptions": {
-              "target": "ES2021",
-              "module": "ESNext",
-              "moduleResolution": "node",
-              "strict": true,
-              "esModuleInterop": true,
-              "skipLibCheck": true,
-              "outDir": "dist"
-            },
-            "include": ["src"]
-          }
-          EOF
-
-          # package.json
-          cat > package.json << 'EOF'
-          {
-            "name": "grants-worker",
-            "version": "1.0.0",
-            "private": true,
-            "scripts": {
-              "build": "tsc",
-              "deploy": "wrangler deploy"
-            },
-            "devDependencies": {
-              "typescript": "^5.5.0",
-              "wrangler": "3.82.0"
-            }
-          }
-          EOF
-
-          # wrangler.toml
-          cat > wrangler.toml << 'EOF'
-          name = "grants-worker"
-          main = "dist/index.js"
-          compatibility_date = "2024-12-24"
-          EOF
-
-      - name: Install Dependencies
+      ############################################################
+      # 4. INSTALL DEPS
+      ############################################################
+      - name: Install dependencies
         run: npm install
 
+      ############################################################
+      # 5. BUILD WORKER
+      ############################################################
       - name: Build Worker
         run: npm run build
 
-      - name: Deploy Worker
+      ############################################################
+      # 6. DEPLOY WORKER
+      ############################################################
+      - name: Deploy Cloudflare Worker
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      ####################################################################
-      # 2. GENERATE UI (with FINAL keyword-based clickable link)
-      ####################################################################
-      - name: Generate UI
+      ############################################################
+      # 7. INJECT WORKER URL INTO UI
+      ############################################################
+      - name: Inject Worker URL
         env:
           WORKER_URL: ${{ secrets.WORKER_URL }}
         run: |
-          mkdir -p public
+          sed -i "s|WORKER_URL_GLOBAL|$WORKER_URL|g" public/app.js
 
-          ############################################################
-          # index.html
-          ############################################################
-          cat > public/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="utf-8">
-            <title>Grant Finder Dashboard</title>
-            <link rel="stylesheet" href="styles.css">
-          </head>
-          <body>
-            <h1>Grant Finder Dashboard</h1>
-
-            <div class="search-bar">
-              <input id="keyword" type="text" placeholder="Search grants…">
-
-              <select id="rows">
-                <option value="20">20</option>
-                <option value="50" selected>50</option>
-                <option value="100">100</option>
-                <option value="250">250</option>
-              </select>
-
-              <button onclick="searchGrants(true)">Search</button>
-            </div>
-
-            <div id="status"></div>
-            <div id="results"></div>
-
-            <button id="load-more" style="display:none;" onclick="loadMore()">Load More</button>
-
-            <script src="app.js"></script>
-          </body>
-          </html>
-          EOF
-
-          ############################################################
-          # styles.css
-          ############################################################
-          cat > public/styles.css << 'EOF'
-          body {
-            font-family: system-ui, Arial, sans-serif;
-            background: #0b1020;
-            color: #eee;
-            padding: 24px;
-          }
-          h1 { text-align: center; margin-bottom: 20px; }
-          .search-bar { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; }
-          input, select {
-            padding: 8px 10px;
-            border-radius: 6px;
-            border: 1px solid #333;
-            background: #11152a;
-            color: #eee;
-          }
-          button {
-            padding: 8px 14px;
-            border-radius: 6px;
-            background: #20c997;
-            border: none;
-            cursor: pointer;
-            font-weight: 600;
-          }
-          #results { display: flex; flex-direction: column; gap: 12px; }
-          .grant {
-            background: #11152a;
-            padding: 14px;
-            border-radius: 8px;
-            border: 1px solid #1f2937;
-          }
-          .grant-title {
-            color: #4fd1c5;
-            font-size: 16px;
-            font-weight: bold;
-            text-decoration: none;
-          }
-          .grant-title:hover {
-            text-decoration: underline;
-            color: #38b2ac;
-          }
-          #load-more {
-            margin: 20px auto;
-            display: block;
-            background: #20c997;
-            padding: 10px 20px;
-            border-radius: 6px;
-            font-weight: bold;
-          }
-          EOF
-
-          ############################################################
-          # FINAL WORKING app.js
-          ############################################################
-          cat > public/app.js << EOF
-          const WORKER_URL = "${WORKER_URL}";
-
-          let currentKeyword = "";
-          let currentRows = 50;
-          let currentStart = 0;
-          let totalAvailable = 0;
-
-          async function searchGrants(reset = false) {
-            const keywordInput = document.getElementById("keyword");
-            const rowsInput = document.getElementById("rows");
-            const statusEl = document.getElementById("status");
-            const resultsEl = document.getElementById("results");
-            const loadMoreBtn = document.getElementById("load-more");
-
-            if (reset) {
-              resultsEl.innerHTML = "";
-              currentStart = 0;
-            }
-
-            currentKeyword = keywordInput.value.trim() || "energy";
-            currentRows = Number(rowsInput.value) || 50;
-
-            statusEl.textContent = "Loading…";
-
-            const url =
-              \`\${WORKER_URL}?keyword=\${encodeURIComponent(currentKeyword)}&rows=\${currentRows}&start=\${currentStart}\`;
-
-            const res = await fetch(url);
-            const data = await res.json();
-
-            const list = data?.data?.oppHits || [];
-            totalAvailable = data?.data?.totalRecords || list.length;
-
-            list.forEach(grant => {
-
-              // ***************************************************
-              // FINAL FIX (verified working)
-              // Always links to accurate results via keyword search
-              // ***************************************************
-              const link =
-                \`https://www.grants.gov/search-results?keywords=\${encodeURIComponent(grant.title)}\`;
-
-              const div = document.createElement("div");
-              div.className = "grant";
-
-              div.innerHTML = \`
-                <a class="grant-title" href="\${link}" target="_blank" rel="noopener noreferrer">
-                  \${grant.title}
-                </a>
-                <div class="grant-meta">
-                  <span><strong>Agency:</strong> \${grant.agencyName}</span>
-                  <span><strong>Opp #:</strong> \${grant.number}</span>
-                  <span><strong>Open:</strong> \${grant.openDate}</span>
-                  <span><strong>Close:</strong> \${grant.closeDate || "N/A"}</span>
-                </div>
-              \`;
-
-              resultsEl.appendChild(div);
-            });
-
-            statusEl.textContent =
-              \`Showing \${resultsEl.children.length} of \${totalAvailable} results\`;
-
-            loadMoreBtn.style.display =
-              resultsEl.children.length < totalAvailable
-                ? "block"
-                : "none";
-          }
-
-          function loadMore() {
-            currentStart += currentRows;
-            searchGrants(false);
-          }
-
-          window.addEventListener("DOMContentLoaded", () => {
-            searchGrants(true);
-          });
-          EOF
-
-      ####################################################################
-      # 3. DEPLOY UI TO CLOUDFLARE PAGES
-      ####################################################################
+      ############################################################
+      # 8. DEPLOY PAGES
+      ############################################################
       - name: Deploy UI to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
