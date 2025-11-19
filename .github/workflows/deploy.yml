@@ -1,5 +1,4 @@
-
-name: Generate & Deploy Cloudflare Worker
+name: Generate & Deploy TS Worker + UI
 
 on:
   push:
@@ -13,30 +12,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Create project structure programmatically
+      - name: Generate TS Worker project
         run: |
           mkdir -p src
 
-          # Create Worker code
-          cat > src/index.js << 'EOF'
+          # index.ts
+          cat > src/index.ts << 'EOF'
           const GRANTS_API_URL = "https://api.grants.gov/v1/api/search2";
 
           export default {
-            async fetch(request) {
+            async fetch(request: Request): Promise<Response> {
+              const url = new URL(request.url);
+              const keyword = url.searchParams.get("keyword") || "energy";
+
               const searchBody = {
                 rows: 20,
-                keyword: "energy",
-                oppStatuses: "forecasted|posted",
-                agencies: "",
-                fundingCategories: "",
-                eligibilities: "",
-                oppNum: "",
-                aln: ""
+                keyword,
+                oppStatuses: "posted|forecasted"
               };
 
               const res = await fetch(GRANTS_API_URL, {
@@ -54,7 +51,6 @@ jobs:
               }
 
               const json = await res.json();
-
               return new Response(JSON.stringify(json), {
                 headers: {
                   "Content-Type": "application/json",
@@ -65,32 +61,234 @@ jobs:
           };
           EOF
 
-          # Create wrangler.toml
-          cat > wrangler.toml << 'EOF'
-          name = "grants-worker"
-          main = "src/index.js"
-          compatibility_date = "2024-12-24"
+          # tsconfig.json
+          cat > tsconfig.json << 'EOF'
+          {
+            "compilerOptions": {
+              "target": "ES2021",
+              "module": "ESNext",
+              "moduleResolution": "node",
+              "strict": true,
+              "esModuleInterop": true,
+              "skipLibCheck": true,
+              "outDir": "dist"
+            },
+            "include": ["src"]
+          }
           EOF
 
-          # Create package.json
+          # package.json
           cat > package.json << 'EOF'
           {
             "name": "grants-worker",
+            "private": true,
             "version": "1.0.0",
-            "devDependencies": {
-              "wrangler": "3.82.0"
-            },
             "scripts": {
+              "build": "tsc",
               "deploy": "wrangler deploy"
+            },
+            "devDependencies": {
+              "typescript": "^5.5.0",
+              "wrangler": "3.82.0"
             }
           }
           EOF
 
-      - name: Install Wrangler
-        run: npm install wrangler@latest
+          # wrangler.toml
+          cat > wrangler.toml << 'EOF'
+          name = "grants-worker"
+          main = "dist/index.js"
+          compatibility_date = "2024-12-24"
+          EOF
 
-      - name: Deploy to Cloudflare
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Deploy Worker
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Generate UI files
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+        run: |
+          mkdir -p public
+
+          # index.html
+          cat > public/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Grant Finder Dashboard</title>
+            <link rel="stylesheet" href="styles.css">
+          </head>
+          <body>
+            <h1>Grant Finder Dashboard</h1>
+
+            <div class="search-bar">
+              <input id="keyword" type="text" placeholder="Search grants (e.g. energy, arts, community)…">
+              <button onclick="searchGrants()">Search</button>
+            </div>
+
+            <div id="status"></div>
+            <div id="results"></div>
+
+            <script src="app.js"></script>
+          </body>
+          </html>
+          EOF
+
+          # styles.css
+          cat > public/styles.css << 'EOF'
+          body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0b1020;
+            color: #f5f5f5;
+            padding: 24px;
+          }
+
+          h1 {
+            text-align: center;
+            margin-bottom: 24px;
+          }
+
+          .search-bar {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 20px;
+          }
+
+          .search-bar input {
+            width: 320px;
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            background: #11152a;
+            color: #f5f5f5;
+          }
+
+          .search-bar button {
+            padding: 8px 14px;
+            border-radius: 6px;
+            border: none;
+            background: #20c997;
+            color: #050608;
+            cursor: pointer;
+            font-weight: 600;
+          }
+
+          .search-bar button:hover {
+            filter: brightness(1.1);
+          }
+
+          #status {
+            text-align: center;
+            margin-bottom: 16px;
+            min-height: 20px;
+            font-size: 14px;
+            color: #a0aec0;
+          }
+
+          #results {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+
+          .grant {
+            background: #11152a;
+            border-radius: 8px;
+            padding: 14px 16px;
+            border: 1px solid #1f2937;
+          }
+
+          .grant-title {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 6px;
+          }
+
+          .grant-meta {
+            font-size: 13px;
+            color: #cbd5e0;
+          }
+
+          .grant-meta span {
+            margin-right: 12px;
+          }
+          EOF
+
+          # app.js with WORKER_URL injected
+          cat > public/app.js << EOF
+          const WORKER_URL = "${WORKER_URL}";
+
+          async function searchGrants() {
+            const keywordInput = document.getElementById("keyword");
+            const statusEl = document.getElementById("status");
+            const resultsEl = document.getElementById("results");
+
+            const keyword = (keywordInput.value || "energy").trim();
+
+            statusEl.textContent = "Loading…";
+            resultsEl.innerHTML = "";
+
+            try {
+              const url = WORKER_URL + "?keyword=" + encodeURIComponent(keyword);
+              const res = await fetch(url);
+
+              if (!res.ok) {
+                statusEl.textContent = "Error: API returned " + res.status;
+                return;
+              }
+
+              const data = await res.json();
+              const list = (data && data.data && data.data.oppHits) || [];
+
+              if (!list.length) {
+                statusEl.textContent = "No results found.";
+                return;
+              }
+
+              statusEl.textContent = \`Showing \${list.length} result(s) for “\${keyword}”\`;
+
+              list.forEach(grant => {
+                const div = document.createElement("div");
+                div.className = "grant";
+
+                div.innerHTML = \`
+                  <div class="grant-title">\${grant.title}</div>
+                  <div class="grant-meta">
+                    <span><strong>Agency:</strong> \${grant.agencyName}</span>
+                    <span><strong>Opp #:</strong> \${grant.number}</span>
+                    <span><strong>Open:</strong> \${grant.openDate}</span>
+                    <span><strong>Close:</strong> \${grant.closeDate || "N/A"}</span>
+                  </div>
+                \`;
+
+                resultsEl.appendChild(div);
+              });
+            } catch (err) {
+              console.error(err);
+              statusEl.textContent = "Something went wrong fetching grants.";
+            }
+          }
+
+          window.addEventListener("DOMContentLoaded", () => {
+            searchGrants();
+          });
+          EOF
+
+      - name: Deploy UI to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: grants-dashboard-ui
+          directory: public
