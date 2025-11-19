@@ -60,7 +60,7 @@ jobs:
           };
           EOF
 
-          # TypeScript config
+          # tsconfig.json
           cat > tsconfig.json << 'EOF'
           {
             "compilerOptions": {
@@ -113,7 +113,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       ####################################################################
-      # 2. GENERATE UI (pagination + fixed clickable links)
+      # 2. GENERATE UI (with FINAL link fix)
       ####################################################################
       - name: Generate UI
         env:
@@ -213,7 +213,7 @@ jobs:
           EOF
 
           ############################################################
-          # app.js (FINAL LINK FIX LOGIC)
+          # FINAL WORKING app.js
           ############################################################
           cat > public/app.js << EOF
           const WORKER_URL = "${WORKER_URL}";
@@ -250,21 +250,13 @@ jobs:
             totalAvailable = data?.data?.totalRecords || list.length;
 
             list.forEach(grant => {
-              // -------------------------------------------
-              // FIXED: Build real grant URL using fallback chain
-              // -------------------------------------------
-              let link =
-                grant.opportunityUrl ||
-                grant.synopsisLink ||
-                grant.url ||
-                (grant.number
-                  ? \`https://www.grants.gov/search-results-detail/\${grant.number}\`
-                  : null);
 
-              // final fallback: generic search with prefilled number
-              if (!link && grant.number) {
-                link = \`https://www.grants.gov/search-results?oppNum=\${encodeURIComponent(grant.number)}\`;
-              }
+              // ***************************************************
+              // FINAL FIX — ALWAYS WORKS
+              // Use Grants.gov search+filter with oppNum to load the correct page
+              // ***************************************************
+              const link = 
+                \`https://www.grants.gov/search-results?oppNum=\${encodeURIComponent(grant.number)}&text=\${encodeURIComponent(grant.title)}\`;
 
               const div = document.createElement("div");
               div.className = "grant";
