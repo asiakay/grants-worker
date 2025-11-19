@@ -113,7 +113,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       ####################################################################
-      # 2. GENERATE UI (Pagination + Load More + Clickable Titles)
+      # 2. GENERATE UI (Pagination + Load More + Official Grants.gov links)
       ####################################################################
       - name: Generate UI
         env:
@@ -234,7 +234,7 @@ jobs:
           EOF
 
           ############################################################
-          # app.js (pagination + clickable URLs)
+          # app.js (pagination + official Grants.gov links)
           ############################################################
           cat > public/app.js << EOF
           const WORKER_URL = "${WORKER_URL}";
@@ -271,11 +271,8 @@ jobs:
             totalAvailable = data?.data?.totalRecords || list.length;
 
             list.forEach(grant => {
-              const link =
-                grant.opportunityUrl ||
-                grant.synopsisLink ||
-                grant.url ||
-                "#";
+              // BUILD OFFICIAL GRANTS.GOV URL
+              const link = \`https://www.grants.gov/search-results-detail/\${grant.number}\`;
 
               const div = document.createElement("div");
               div.className = "grant";
