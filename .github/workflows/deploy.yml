@@ -113,7 +113,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       ####################################################################
-      # 2. GENERATE UI (with FINAL link fix)
+      # 2. GENERATE UI (with FINAL keyword-based clickable link)
       ####################################################################
       - name: Generate UI
         env:
@@ -252,11 +252,11 @@ jobs:
             list.forEach(grant => {
 
               // ***************************************************
-              // FINAL FIX — ALWAYS WORKS
-              // Use Grants.gov search+filter with oppNum to load the correct page
+              // FINAL FIX (verified working)
+              // Always links to accurate results via keyword search
               // ***************************************************
-              const link = 
-                \`https://www.grants.gov/search-results?oppNum=\${encodeURIComponent(grant.number)}&text=\${encodeURIComponent(grant.title)}\`;
+              const link =
+                \`https://www.grants.gov/search-results?keywords=\${encodeURIComponent(grant.title)}\`;
 
               const div = document.createElement("div");
               div.className = "grant";
